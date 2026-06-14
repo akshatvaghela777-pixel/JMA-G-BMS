@@ -1,0 +1,59 @@
+workflows:
+  ios-capacitor:
+    name: JMA&G BMS iOS IPA
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    environment:
+      groups:
+        - ios_signing   # APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER,
+                        # APP_STORE_CONNECT_PRIVATE_KEY, CERTIFICATE_PRIVATE_KEY (optional)
+      vars:
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+        BUNDLE_ID: "com.jmag.bms"
+      node: 20
+      xcode: latest
+      cocoapods: default
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: main
+          include: true
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci || npm install
+      - name: Build web app
+        script: npm run build
+      - name: Capacitor sync iOS
+        script: npx cap sync ios
+      - name: CocoaPods install
+        script: |
+          cd ios/App
+          pod install --repo-update
+      - name: Set up provisioning (App Store)
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Increment build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $(($(date +%s) % 1000000))
+      - name: Build IPA (App Store)
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME" \
+            --config Release \
+            --archive-flags="-destination 'generic/platform=iOS'"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
